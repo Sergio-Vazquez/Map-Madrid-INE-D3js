@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="http://d3js.org/d3.v3.min.js"></script>
+<script src="http://d3js.org/queue.v1.min.js"></script>
+<script src="http://d3js.org/topojson.v1.min.js"></script>
+
+<style type="text/css">
+
+body {
+  font: 12px sans-serif;
+  background: rgba(47, 45, 45, 1);
+}
+
+#caja{
+  left: 5px;
+  width: 20%;
+  font-weight: bold;
+  height: 20px;
+  text-align: center;
+  background: white;
+}
+
+#selector{
+  margin-top: 2%; 
+  float: left; 
+  width: 100%;
+  background: rgba(255, 193, 14, 1);
+  font-style: oblique;
+  font-weight: bold;
+}
+
+svg {
+  margin-left: 10%;
+  width: 100%;
+  height: 100%;
+}
+
+path {
+	stroke-width: 0.5px;
+	cursor: pointer;
+}	
+
+
+path:hover{
+  stroke-width: 1.5px;
+  stroke: red;
+}
+
+
+div.tooltip {
+  position: absolute;
+  background-color: white;
+  border: 1px solid black;
+  border-radius: 20px;
+  color: black;
+  font-weight: bold;
+  padding: 4px 8px;
+  display: none;
+}
+
+
+
+</style>
+
+</head>
+
+<body>
+
+  <div id="caja">
+    
+	<div> Seleccionar el indicador a representar: 
+    <select id="selector"></select>
+  </div>
+
+	</div>
+
+<script>
+
+//Defino las dimensiones del mapa
+	var width = 800,
+		height = 1000,
+		selectedProperty = "Poblacion";
+		baseColors = d3.scale.category20()
+		
+	var svg = d3.select("body").append("svg")
+			.attr("width", width)
+			.attr("height", height)
+			.call(d3.behavior.zoom().on("zoom", redraw))
+            .append("g");
+			
+	// creo el tooltip
+	var tooltip = d3.select("body").append("div").attr("class","tooltip");		
+			
+    queue().defer(d3.json, "src/sscc_json.topojson")
+           .defer(d3.tsv, "src/ine.tsv")
+           .await(ready);			
+					
+    function redraw () {
+        self.svg.attr("transform", "translate(" + d3.event.translate + ")"
+                                           + " scale(" + d3.event.scale + ")");
+            };
+			
+    function ready (error, sscc_json, ine) {
+        var ssccData = {};
+        ine.forEach(function (d, i) {
+            if (i == 0) { fillSelector(Object.keys(d)); }
+            Object.keys(d).forEach(function (k) {
+                var v = parseFloat(d[k]);
+                if (!isNaN(v)) {
+                    d[k] = v;
+                }
+            });
+                ssccData[d.SSCC_2011] = d;
+        });
+		
+                function fillSelector (keys) {
+                  keys = keys.filter(function (e) { return e !== "SSCC_2011"; })
+                  d3.select("#selector")
+                    .selectAll("option")
+                    .data(keys)
+                    .enter()
+                    .append("option")
+                    .attr("value", function (d) { return d; })
+                    .text(function (d) { return d; });
+                  d3.select("#selector").on("change", function () {
+                    console.log(this);
+                    selectedProperty = this.value;
+                    updateColors();
+                  });
+                };			
+			
+			
+                function updateColors () {
+                    var tempColor = baseColors(selectedProperty),
+                        tempScale = d3.scale.linear()
+                                            .domain([d3.min(ine, function (d) { return d[selectedProperty]; }),
+                                                     d3.max(ine, function (d) { return d[selectedProperty]; })])
+                                            .range([d3.rgb(tempColor).brighter(3),
+                                                    d3.rgb(tempColor).darker(3)])
+                                            .clamp(true);
+                    svg.selectAll("path")
+                       .transition()
+                       .duration(10)
+                       .style("fill", function (d) {
+                         if ("properties" in d) {
+                           if ("CUSEC" in d.properties) {
+                             if (d.properties.CUSEC in ssccData) {
+                               if (ssccData[d.properties.CUSEC][selectedProperty] !== "-") {
+                                 return tempScale(ssccData[d.properties.CUSEC][selectedProperty]);
+                               }
+                             }
+                           }
+                         }
+                         return "#ddc";
+                       });
+
+                };			
+					
+			
+	//Creo la proyección, en este caso una proyección Mercator.		
+	var collection = topojson.feature(sscc_json, sscc_json.objects.collection),
+		projection = d3.geo.mercator()
+			.scale(19000)		
+			.center([-3.816,40.528])
+			.translate([width/2,height/3.5]),
+
+	//genero el path basado en la proyección		
+	path = d3.geo.path()
+		.projection(projection);	
+
+	svg.selectAll("path")
+		.data(topojson.feature(sscc_json, sscc_json.objects.collection).features)
+		.enter()
+		.append("path")
+		.attr("fill-opacity", 0.7)
+		.attr("d", path)
+		.on("mouseover",showTooltip)
+		.on("mousemove",moveTooltip)
+		.on("mouseout",hideTooltip)
+	
+	updateColors();
+
+};
+
+
+//actualiza la funcion zoom
+function zoomed() {
+  features.attr("transform", "translate(" + zoom.translate() + ")scale(" + zoom.scale() + ")")
+      .selectAll("path").style("stroke-width", 1 / zoom.scale() + "px" );
+}
+
+
+//Posicion relativa del tooltip respecto al cursor
+var tooltipOffset = {x: 5, y: -25};
+
+//creo el tooltip, y digo que muestre el nombre del municipio (NMUN)
+function showTooltip(d) {
+  moveTooltip();
+  tooltip.style("display","block")
+      .text(d.properties.NMUN);
+}
+
+//Move the tooltip to track the mouse
+function moveTooltip() {
+  tooltip.style("top",(d3.event.pageY+tooltipOffset.y)+"px")
+      .style("left",(d3.event.pageX+tooltipOffset.x)+"px");
+}
+
+//Create a tooltip, hidden at the start
+function hideTooltip() {
+  tooltip.style("display","none");
+}
+
+</script>
+</body>
+</html>
